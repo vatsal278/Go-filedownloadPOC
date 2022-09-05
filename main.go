@@ -1,56 +1,55 @@
 package main
 
 import (
-	"bytes"
+	"fmt"
 	"github.com/gorilla/mux"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/jpeg"
+	"github.com/vatsal278/go-redis-cache"
+	"io/ioutil"
 	"log"
 	"net/http"
-	"strconv"
 )
 
 func main() {
+	cacher := redis.NewCacher(redis.Config{
+		Addr: "localhost:9096",
+	})
 	r := mux.NewRouter()
 	r.HandleFunc("/download/{image}", func(w http.ResponseWriter, r *http.Request) {
-		//img, err := ioutil.ReadFile("Observation.png")
-		//if err!=nil{
-		//	log.Print(err.Error())
-		//	return
-		//}
 		v := mux.Vars(r)
-		if v["image"] == "blue" {
-			m := image.NewRGBA(image.Rect(0, 0, 240, 240))
-			blue := color.RGBA{0, 0, 255, 255}
-			draw.Draw(m, m.Bounds(), &image.Uniform{blue}, image.ZP, draw.Src)
-			var img image.Image = m
-			buffer := new(bytes.Buffer)
-			if err := jpeg.Encode(buffer, img, nil); err != nil {
-				log.Println("unable to encode image.")
-			}
-			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Content-Length", strconv.Itoa(len(buffer.Bytes())))
-			if _, err := w.Write(buffer.Bytes()); err != nil {
-				log.Println("unable to write image.")
-			}
-		} else if v["image"] == "red" {
-			m := image.NewRGBA(image.Rect(0, 0, 240, 240))
-			red := color.RGBA{255, 0, 0, 255}
-			draw.Draw(m, m.Bounds(), &image.Uniform{red}, image.ZP, draw.Src)
-			var img image.Image = m
-			buffer := new(bytes.Buffer)
-			if err := jpeg.Encode(buffer, img, nil); err != nil {
-				log.Println("unable to encode image.")
-			}
-			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Content-Length", strconv.Itoa(len(buffer.Bytes())))
-			if _, err := w.Write(buffer.Bytes()); err != nil {
-				log.Println("unable to write image.")
-			}
+		b, err := cacher.Get(v["image"])
+		if err != nil {
+			log.Print(err.Error())
+		}
+		w.Header().Set("Content-Disposition", "attachment; filename=Observation.png")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprint(len(b)))
+		if _, err := w.Write(b); err != nil {
+			log.Println("unable to write image.")
 		}
 	}).Methods("GET")
+	r.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("File Upload Endpoint Hit")
+		file, handler, err := r.FormFile("file")
+		if err != nil {
+			log.Println("Error Retrieving the File")
+			log.Println(err)
+			return
+		}
+		defer file.Close()
+		log.Printf("Uploaded File: %+v\n", handler.Filename)
+		tempFile, err := ioutil.TempFile("", handler.Filename)
+		if err != nil {
+			fmt.Println(err)
+		}
+		defer tempFile.Close()
+		fileBytes, err := ioutil.ReadAll(file)
+		if err != nil {
+			fmt.Println(err)
+		}
+		tempFile.Write(fileBytes)
+		cacher.Set(handler.Filename, tempFile, 0)
+		log.Println("Successfully Uploaded File\n")
+	}).Methods("POST")
 	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":9080", r))
 }
